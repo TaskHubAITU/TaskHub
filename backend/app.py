@@ -10,6 +10,8 @@ import re
 import secrets
 import sqlite3
 import time
+import logging
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from http import HTTPStatus
@@ -82,7 +84,15 @@ def database(path: Path = DB_PATH):
 def initialize(path: Path = DB_PATH):
     with database(path) as db:
         db.execute("PRAGMA journal_mode=WAL")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 1:
+            raise RuntimeError("Database schema is newer than this application")
         db.executescript("""
+            CREATE TABLE IF NOT EXISTS auth_attempts (
+                client TEXT PRIMARY KEY,
+                window_start INTEGER NOT NULL,
+                attempts INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
@@ -123,7 +133,46 @@ def initialize(path: Path = DB_PATH):
                 PRIMARY KEY(group_id, user_id, deadline_id),
                 FOREIGN KEY(group_id, user_id) REFERENCES group_members(group_id, user_id) ON DELETE CASCADE
             );
+            CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+            PRAGMA user_version=1;
         """)
+
+
+def auth_allowed(path, client):
+    now = int(time.time())
+    with database(path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM auth_attempts WHERE window_start<=?", (now - 900,))
+        db.execute("DELETE FROM sessions WHERE expires_at<=?", (now,))
+        row = db.execute("SELECT attempts FROM auth_attempts WHERE client=?", (client,)).fetchone()
+        if row and row[0] >= 20:
+            return False
+        db.execute("INSERT INTO auth_attempts VALUES(?,?,1) ON CONFLICT(client) DO UPDATE SET attempts=attempts+1", (client, now))
+    return True
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
 
 
 def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
@@ -133,6 +182,10 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "TaskHubAPI/1"
+
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(15)
 
         def _send(self, status: int, data: dict):
             # Emit only after the route's database context has committed.
@@ -147,6 +200,8 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if status == 429:
+                self.send_header("Retry-After", "900")
             self.send_header("X-Content-Type-Options", "nosniff")
             if allowed_origin and self.headers.get("Origin") == allowed_origin:
                 self.send_header("Access-Control-Allow-Origin", allowed_origin)
@@ -231,6 +286,11 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             if method == "GET" and not route.startswith("/api/") and self._web(route):
                 return
             if route in ("/api/v1/auth/register", "/api/v1/auth/login") and method == "POST":
+                client = self.client_address[0]
+                if os.environ.get("TASKHUB_TRUST_PROXY") == "1":
+                    client = self.headers.get("X-Real-IP", client)
+                if not auth_allowed(path, client):
+                    return self._send(429, {"error": "too_many_attempts"})
                 data = self._body()
                 email = data.get("email", "")
                 password = data.get("password", "")
@@ -453,7 +513,14 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             except ValueError as exc:
                 self._send(400, {"error": "bad_request", "message": str(exc)})
             except sqlite3.Error:
+                logging.exception("Database request failed")
                 self._send(500, {"error": "database_error"})
+            except (TimeoutError, ConnectionError):
+                self.close_connection = True
+                return
+            except Exception:
+                logging.exception("Unhandled request failure")
+                self._send(500, {"error": "internal_error"})
             finally:
                 self._defer_response = False
             if self._pending_response is not None:
@@ -467,7 +534,7 @@ def main():
     port = int(os.environ.get("TASKHUB_PORT", "8000"))
     initialize(DB_PATH)
     web_dir = os.environ.get("TASKHUB_WEB_DIR")
-    server = ThreadingHTTPServer((host, port), make_handler(DB_PATH, Path(web_dir) if web_dir else None))
+    server = BoundedHTTPServer((host, port), make_handler(DB_PATH, Path(web_dir) if web_dir else None))
     print(f"TaskHub API listening on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
