@@ -68,10 +68,6 @@ class ApiTest(unittest.TestCase):
                                      {'revision': True, 'lessons': [], 'deadlines': []}, a[1]['token'])[0], 400)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class GroupTest(unittest.TestCase):
     setUp = ApiTest.setUp
     tearDown = ApiTest.tearDown
@@ -140,6 +136,7 @@ class WebTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             (root / 'index.html').write_text('<!doctype html><title>TaskHub</title>')
+            (root / '.env').write_text('SECRET=value')
             (root / 'main.dart.js').write_text('console.log("app")')
             path = root / 'db.sqlite3'
             initialize(path)
@@ -150,7 +147,10 @@ class WebTest(unittest.TestCase):
                 for route, status, marker in [('/', 200, b'TaskHub'),
                                                ('/main.dart.js', 200, b'console'),
                                                ('/groups/1', 200, b'TaskHub'),
-                                               ('/missing.js', 404, b'not_found')]:
+                                               ('/missing.js', 404, b'not_found'),
+                                               ('/db.sqlite3', 404, b'not_found'),
+                                               ('/.env', 404, b'not_found'),
+                                               ('/../outside.js', 404, b'not_found')]:
                     connection = HTTPConnection('127.0.0.1', server.server_port)
                     connection.request('GET', route)
                     response = connection.getresponse()
@@ -161,3 +161,52 @@ class WebTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join()
+
+
+class ReliabilityTest(unittest.TestCase):
+    setUp = ApiTest.setUp
+    tearDown = ApiTest.tearDown
+    request = ApiTest.request
+
+    def test_failed_commit_does_not_report_success_or_keep_account(self):
+        import sqlite3
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from backend import app
+        original = app.database
+
+        @contextmanager
+        def failing_database(path):
+            with original(path) as db:
+                yield db
+                # Let the preceding auth-rate transaction commit. Fail only after
+                # registration has inserted the account, before its commit.
+                if db.execute('SELECT COUNT(*) FROM users').fetchone()[0]:
+                    raise sqlite3.OperationalError("simulated commit failure")
+
+        credentials = {'email': 'rollback@example.com', 'password': 'long password 123'}
+        with patch.object(app, 'database', failing_database):
+            self.assertEqual(self.request('POST', '/api/v1/auth/register', credentials),
+                             (500, {'error': 'database_error'}))
+        self.assertEqual(self.request('POST', '/api/v1/auth/login', credentials)[0], 401)
+        self.assertEqual(self.request('POST', '/api/v1/auth/register', credentials)[0], 201)
+
+    def test_invalid_planner_never_replaces_saved_state(self):
+        token = self.request('POST', '/api/v1/auth/register',
+                             {'email': 'validate@example.com', 'password': 'long password 123'})[1]['token']
+        lesson = {'id': 'one', 'day': 'Monday', 'subject': 'Math', 'room': '201',
+                  'start': '09:00', 'end': '10:00', 'colorValue': 123, 'iconCodePoint': 456}
+        for change in ({'day': 'Someday'}, {'start': '25:00'}, {'end': '08:00'},
+                       {'subject': '   '}, {'start': '9:00'}):
+            state = {'revision': 0, 'lessons': [dict(lesson, **change)], 'deadlines': []}
+            self.assertEqual(self.request('PUT', '/api/v1/state', state, token)[0], 400)
+        deadline = {'id': 'task', 'subject': 'Math', 'title': 'Quiz', 'due': '2026-02-30T12:00:00',
+                    'completed': False, 'colorValue': 123, 'iconCodePoint': 456}
+        self.assertEqual(self.request('PUT', '/api/v1/state',
+                         {'revision': 0, 'lessons': [], 'deadlines': [deadline]}, token)[0], 400)
+        self.assertEqual(self.request('GET', '/api/v1/state', token=token)[1],
+                         {'revision': 0, 'lessons': [], 'deadlines': []})
+
+
+if __name__ == '__main__':
+    unittest.main()

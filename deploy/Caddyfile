@@ -1,0 +1,22 @@
+{$TASKHUB_DOMAIN} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000"
+    }
+    @api path /api/* /health
+    handle @api {
+        request_body {
+            max_size 512KB
+        }
+        reverse_proxy api:8000 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

@@ -10,11 +10,15 @@ import re
 import secrets
 import sqlite3
 import time
+import logging
+import threading
 from contextlib import contextmanager
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+from backend.accounts import manage, recover
 
 DB_PATH = Path(os.environ.get("TASKHUB_DB", "taskhub.sqlite3"))
 SESSION_LIFETIME = 30 * 24 * 3600
@@ -35,6 +39,8 @@ def valid_items(items, kind):
             return False
         if not item["id"] or item["id"] in ids or not item["subject"]:
             return False
+        if not item["subject"].strip():
+            return False
         ids.add(item["id"])
         if any(type(item[key]) is not int for key in ("colorValue", "iconCodePoint")):
             return False
@@ -42,6 +48,20 @@ def valid_items(items, kind):
             return False
         if kind == "deadlines" and type(item["completed"]) is not bool:
             return False
+        if kind == "lessons":
+            if item["day"] not in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
+                return False
+            if any(not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item[key]) for key in ("start", "end")):
+                return False
+            if item["start"] >= item["end"]:
+                return False
+        else:
+            if not item["title"].strip() or "T" not in item["due"]:
+                return False
+            try:
+                datetime.fromisoformat(item["due"].replace("Z", "+00:00"))
+            except ValueError:
+                return False
     return True
 
 
@@ -65,7 +85,15 @@ def database(path: Path = DB_PATH):
 def initialize(path: Path = DB_PATH):
     with database(path) as db:
         db.execute("PRAGMA journal_mode=WAL")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 2:
+            raise RuntimeError("Database schema is newer than this application")
         db.executescript("""
+            CREATE TABLE IF NOT EXISTS auth_attempts (
+                client TEXT PRIMARY KEY,
+                window_start INTEGER NOT NULL,
+                attempts INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
@@ -106,7 +134,50 @@ def initialize(path: Path = DB_PATH):
                 PRIMARY KEY(group_id, user_id, deadline_id),
                 FOREIGN KEY(group_id, user_id) REFERENCES group_members(group_id, user_id) ON DELETE CASCADE
             );
+            CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+            CREATE TABLE IF NOT EXISTS recovery_codes (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                code_hash BLOB NOT NULL
+            );
+            PRAGMA user_version=2;
         """)
+
+
+def auth_allowed(path, client):
+    now = int(time.time())
+    with database(path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM auth_attempts WHERE window_start<=?", (now - 900,))
+        db.execute("DELETE FROM sessions WHERE expires_at<=?", (now,))
+        row = db.execute("SELECT attempts FROM auth_attempts WHERE client=?", (client,)).fetchone()
+        if row and row[0] >= 20:
+            return False
+        db.execute("INSERT INTO auth_attempts VALUES(?,?,1) ON CONFLICT(client) DO UPDATE SET attempts=attempts+1", (client, now))
+    return True
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
 
 
 def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
@@ -117,12 +188,25 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "TaskHubAPI/1"
 
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(15)
+
         def _send(self, status: int, data: dict):
-            body = json.dumps(data, separators=(",", ":")).encode("utf-8")
+            # Emit only after the route's database context has committed.
+            if getattr(self, "_defer_response", False):
+                self._pending_response = (status, data)
+                return
+            self._emit(status, data)
+
+        def _emit(self, status: int, data: dict):
+            body = b"" if status == HTTPStatus.NO_CONTENT else json.dumps(data, separators=(",", ":")).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if status == 429:
+                self.send_header("Retry-After", "900")
             self.send_header("X-Content-Type-Options", "nosniff")
             if allowed_origin and self.headers.get("Origin") == allowed_origin:
                 self.send_header("Access-Control-Allow-Origin", allowed_origin)
@@ -160,7 +244,13 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                 return False
             # Flutter uses path URLs for assets. Unknown routes without an
             # extension fall back to the app shell for browser navigation.
-            candidate = (web_dir / route.lstrip("/")).resolve()
+            relative = Path(route.lstrip("/"))
+            # A misplaced database, configuration or source file is never an asset.
+            extensions = {".html", ".js", ".css", ".json", ".wasm", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".ttf", ".otf", ".woff", ".woff2", ".bin", ".frag"}
+            if any(part.startswith(".") for part in relative.parts) or (relative.suffix and relative.suffix.lower() not in extensions):
+                self._send(404, {"error": "not_found"})
+                return True
+            candidate = (web_dir / relative).resolve()
             if not candidate.is_relative_to(web_dir):
                 self._send(404, {"error": "not_found"})
                 return True
@@ -197,10 +287,26 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             route = urlsplit(self.path).path
             method = self.command
             if (method, route) == ("GET", "/health"):
+                with database(path) as db:
+                    db.execute("SELECT 1 FROM users LIMIT 1").fetchone()
                 return self._send(200, {"status": "ok"})
             if method == "GET" and not route.startswith("/api/") and self._web(route):
                 return
+            if route == "/api/v1/auth/recover" and method == "POST":
+                client = self.client_address[0]
+                if os.environ.get("TASKHUB_TRUST_PROXY") == "1":
+                    client = self.headers.get("X-Real-IP", client)
+                if not auth_allowed(path, client):
+                    return self._send(429, {"error": "too_many_attempts"})
+                data = self._body()
+                with database(path) as db:
+                    return self._send(*recover(db, data))
             if route in ("/api/v1/auth/register", "/api/v1/auth/login") and method == "POST":
+                client = self.client_address[0]
+                if os.environ.get("TASKHUB_TRUST_PROXY") == "1":
+                    client = self.headers.get("X-Real-IP", client)
+                if not auth_allowed(path, client):
+                    return self._send(429, {"error": "too_many_attempts"})
                 data = self._body()
                 email = data.get("email", "")
                 password = data.get("password", "")
@@ -215,8 +321,11 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                         password_hash = hashlib.scrypt(password.encode(), salt=salt,
                                                        n=2**14, r=8, p=1, dklen=32)
                         try:
-                            cursor = db.execute("INSERT INTO users(email,password_hash,salt,created_at) VALUES(?,?,?,?)",
-                                                (email, password_hash, salt, int(time.time())))
+                            # Avoid reusing deleted account IDs in device caches. Keep IDs
+                            # exactly representable by JavaScript/web clients.
+                            user_id = secrets.randbelow(2**52 - 1) + 1
+                            cursor = db.execute("INSERT INTO users(id,email,password_hash,salt,created_at) VALUES(?,?,?,?,?)",
+                                                (user_id, email, password_hash, salt, int(time.time())))
                         except sqlite3.IntegrityError:
                             return self._send(409, {"error": "email_taken"})
                         user_id = cursor.lastrowid
@@ -243,6 +352,14 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                     if user is None:
                         return self._send(401, {"error": "unauthorized"})
                     user_id = user["id"]
+                    if method == "POST" and route in ("/api/v1/account/password", "/api/v1/account/delete", "/api/v1/account/recovery-code"):
+                        data = self._body()
+                        # Reauthentication is rate limited by account, independent of IP.
+                        if not auth_allowed(path, "account:" + str(user_id)):
+                            return self._send(429, {"error": "too_many_attempts"})
+                        return self._send(*manage(db, user_id, route.rsplit("/", 1)[1], data))
+                    # Membership, deadline existence and writes share one transaction.
+                    db.execute("BEGIN IMMEDIATE" if method in ("POST", "PUT") else "BEGIN")
                     if (method, route) == ("GET", "/api/v1/auth/me"):
                         return self._send(200, {"id": user["id"], "email": user["email"]})
                     if (method, route) == ("POST", "/api/v1/auth/logout"):
@@ -416,12 +533,25 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             self._handle()
 
         def _handle(self):
+            self._defer_response = True
+            self._pending_response = None
             try:
                 self._route()
             except ValueError as exc:
                 self._send(400, {"error": "bad_request", "message": str(exc)})
             except sqlite3.Error:
+                logging.exception("Database request failed")
                 self._send(500, {"error": "database_error"})
+            except (TimeoutError, ConnectionError):
+                self.close_connection = True
+                return
+            except Exception:
+                logging.exception("Unhandled request failure")
+                self._send(500, {"error": "internal_error"})
+            finally:
+                self._defer_response = False
+            if self._pending_response is not None:
+                self._emit(*self._pending_response)
 
     return Handler
 
@@ -431,7 +561,7 @@ def main():
     port = int(os.environ.get("TASKHUB_PORT", "8000"))
     initialize(DB_PATH)
     web_dir = os.environ.get("TASKHUB_WEB_DIR")
-    server = ThreadingHTTPServer((host, port), make_handler(DB_PATH, Path(web_dir) if web_dir else None))
+    server = BoundedHTTPServer((host, port), make_handler(DB_PATH, Path(web_dir) if web_dir else None))
     print(f"TaskHub API listening on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()

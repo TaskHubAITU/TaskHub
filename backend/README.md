@@ -53,7 +53,9 @@ Keep it in device secure storage; don't put it in the source code or a URL.
 A state GET returns `{"revision":0,"lessons":[],"deadlines":[]}` for a new
 account. PUT the same shape with the user's lesson and deadline JSON arrays.
 The server validates required fields and limits each array to 1000 objects and
-the full request to 512 KiB. A successful PUT returns the incremented revision.
+the full request to 512 KiB. Lessons require a valid weekday and 24-hour
+`HH:MM` times with start before end; deadlines require a valid ISO date/time
+containing `T`. Titles and subjects cannot be blank. A successful PUT returns the incremented revision.
 If another device already wrote a new revision, PUT returns HTTP 409
 `revision_conflict`; GET the new state and ask the user how to reconcile it.
 A 401 means the token is absent, invalid or expired.
@@ -72,6 +74,27 @@ Group deadlines are shared, but completion is personal: PUT
 completion value; another member's checkbox is unaffected. Group owners cannot
 leave their own group. Removing a deadline clears its completion records.
 
-The Flutter Groups tab uses these endpoints. The original personal Schedule and
-Deadlines tabs still keep their data in SharedPreferences; personal cloud sync
-is not wired up yet.
+Flutter uses these endpoints for groups and personal cloud planners. Guest data
+is separate; use Import guest planner after signing in to copy it explicitly.
+Pending edits are stored per account. Revision conflicts require an explicit
+choice and retain the discarded version locally for recovery.
+
+
+## Reliability and hosting boundaries
+
+API responses are sent after the SQLite transaction commits. A database failure
+returns an error instead of acknowledging an uncommitted change. Backend checks
+run on pull requests and pushes affecting backend code.
+
+Keep `TASKHUB_DB` outside `TASKHUB_WEB_DIR`. The static server rejects hidden
+paths, traversal outside the web root and extensions outside its asset allowlist,
+including SQLite and Python files. The web directory must contain only public
+build assets; JSON files there are public too.
+
+Deploy the bounded API behind Caddy using compose.yaml. See deploy/README.md
+and deploy/RELEASE_CHECKLIST.md for infrastructure setup and release acceptance.
+Schema version 2 adds hashed one-use recovery codes. POST account/password,
+account/recovery-code and account/delete under /api/v1 require the current
+password. POST /api/v1/auth/recover accepts email, recoveryCode and newPassword;
+it consumes the code and revokes all sessions. Account deletion removes owned
+groups as well as the personal planner.

@@ -1,7 +1,8 @@
 name: Flutter checks
 on:
   push:
-    branches: [feature/group-planners, feature/web-app]
+    branches: [feature/group-planners, feature/web-app, fix/backend-reliability]
+  pull_request:
   workflow_dispatch:
 jobs:
   flutter:
@@ -11,6 +12,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.8'
           cache: true
       - run: flutter pub get
       - run: flutter analyze
