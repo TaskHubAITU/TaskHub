@@ -321,8 +321,11 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                         password_hash = hashlib.scrypt(password.encode(), salt=salt,
                                                        n=2**14, r=8, p=1, dklen=32)
                         try:
-                            cursor = db.execute("INSERT INTO users(email,password_hash,salt,created_at) VALUES(?,?,?,?)",
-                                                (email, password_hash, salt, int(time.time())))
+                            # Avoid reusing deleted account IDs in device caches. Keep IDs
+                            # exactly representable by JavaScript/web clients.
+                            user_id = secrets.randbelow(2**52 - 1) + 1
+                            cursor = db.execute("INSERT INTO users(id,email,password_hash,salt,created_at) VALUES(?,?,?,?,?)",
+                                                (user_id, email, password_hash, salt, int(time.time())))
                         except sqlite3.IntegrityError:
                             return self._send(409, {"error": "email_taken"})
                         user_id = cursor.lastrowid

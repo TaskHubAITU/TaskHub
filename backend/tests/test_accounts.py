@@ -31,3 +31,11 @@ class AccountTest(unittest.TestCase):
         token = self.request('POST', '/api/v1/auth/login', credentials)[1]['token']
         self.assertEqual(self.request('POST', '/api/v1/account/delete', {'password': credentials['password']}, token)[0], 200)
         self.assertEqual(self.request('POST', '/api/v1/auth/login', credentials)[0], 401)
+
+    def test_deleted_account_id_is_not_reused(self):
+        credentials = {'email': 'reuse@example.com', 'password': 'original password 123'}
+        first = self.request('POST', '/api/v1/auth/register', credentials)[1]
+        self.assertEqual(self.request('POST', '/api/v1/account/delete', {'password': credentials['password']}, first['token'])[0], 200)
+        second = self.request('POST', '/api/v1/auth/register', credentials)[1]
+        self.assertNotEqual(first['user']['id'], second['user']['id'])
+        self.assertLess(second['user']['id'], 2**53)
