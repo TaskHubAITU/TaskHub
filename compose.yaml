@@ -19,7 +19,9 @@ services:
     environment:
       TASKHUB_DB: /data/taskhub.sqlite3
     volumes:
-      - taskhub_data:/data:ro
+      # SQLite read-only connections still need writable WAL shared-memory files.
+      # backup.py opens the database with mode=ro to prohibit database writes.
+      - taskhub_data:/data
       - taskhub_backups:/backups
     read_only: true
     tmpfs: [/tmp]
