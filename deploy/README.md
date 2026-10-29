@@ -50,10 +50,12 @@ checks on the target host. No target host is configured by this repository.
 Auth endpoints allow 20 attempts per IP per 15 minutes, persisted in SQLite.
 Shared campus IPs share the allowance. Monitor 429 responses before rollout.
 Sessions expire after 30 days; expired sessions are pruned during auth attempts.
-Schema version 1 upgrades existing databases idempotently; newer schemas are
+Schema version 2 upgrades existing databases idempotently; newer schemas are
 rejected to avoid accidental downgrade writes.
 
-Personal Schedule/Deadlines in Flutter are still device-local. They do not yet
-sync to the server. This is a release blocker for a multi-device cloud planner.
-Password recovery, verified email delivery, account deletion, monitoring alerts,
-off-host backup automation and load testing also remain to be completed.
+Compose runs a daily backup worker and exposes its backup freshness as container
+health. Configure replication of the taskhub_backups volume to off-host storage.
+Use deploy/check-health.sh on an independent monitor with TASKHUB_URL and optional
+TASKHUB_ALERT_WEBHOOK. These infrastructure destinations are deployment settings.
+
+See RELEASE_CHECKLIST.md for remaining verification on the actual target host.

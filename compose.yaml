@@ -12,6 +12,26 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 512m
     pids_limit: 100
+  backup:
+    build: .
+    restart: unless-stopped
+    command: [python, -m, backend.maintenance]
+    environment:
+      TASKHUB_DB: /data/taskhub.sqlite3
+    volumes:
+      - taskhub_data:/data:ro
+      - taskhub_backups:/backups
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, "import time,pathlib; assert time.time()-int(pathlib.Path('/backups/last-success').read_text()) < 90000"]
+      interval: 60s
+      start_period: 300s
+    depends_on:
+      api:
+        condition: service_healthy
   web:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -28,5 +48,6 @@ services:
         condition: service_healthy
 volumes:
   taskhub_data:
+  taskhub_backups:
   caddy_data:
   caddy_config:

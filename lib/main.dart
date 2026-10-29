@@ -1,9 +1,10 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import 'planner_sync.dart';
+import 'taskhub_api.dart';
+
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -72,6 +73,7 @@ class TaskHubApp extends StatefulWidget {
 }
 
 class _TaskHubAppState extends State<TaskHubApp> {
+  final _sync = PlannerSync(TaskHubApi.shared);
   int _tab = 0;
   bool _loading = true;
   List<Lesson> _lessons = <Lesson>[];
@@ -97,45 +99,43 @@ class _TaskHubAppState extends State<TaskHubApp> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _sync.addListener(_plannerChanged);
+    _sync.start();
   }
 
-  Future<void> _load() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-
-    final List<dynamic> lessonJson =
-        jsonDecode(prefs.getString('taskhub_lessons') ?? '[]') as List<dynamic>;
-    final List<dynamic> deadlineJson = jsonDecode(
-      prefs.getString('taskhub_deadlines') ?? '[]',
-    ) as List<dynamic>;
-
+  void _plannerChanged() {
     if (!mounted) return;
     setState(() {
-      _lessons = lessonJson
-          .map((dynamic e) => Lesson.fromJson(e as Map<String, dynamic>))
+      _loading = _sync.loading;
+      if (_loading) _groupDeadlines = [];
+      _lessons = (_sync.state['lessons'] as List)
+          .map((e) => Lesson.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
-      _deadlines = deadlineJson
-          .map((dynamic e) => DeadlineItem.fromJson(e as Map<String, dynamic>))
+      _deadlines = (_sync.state['deadlines'] as List)
+          .map(
+            (e) => DeadlineItem.fromJson(Map<String, dynamic>.from(e as Map)),
+          )
           .toList();
-      _loading = false;
     });
-    await _syncReminders();
+    _syncReminders();
+  }
+
+  @override
+  void dispose() {
+    _sync.removeListener(_plannerChanged);
+    _sync.dispose();
+    super.dispose();
   }
 
   Future<void> _saveLessons() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'taskhub_lessons',
-      jsonEncode(_lessons.map((Lesson e) => e.toJson()).toList()),
+    await _sync.edit(
+      _lessons.map((e) => e.toJson()).toList(),
+      _deadlines.map((e) => e.toJson()).toList(),
     );
   }
 
   Future<void> _saveDeadlines() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'taskhub_deadlines',
-      jsonEncode(_deadlines.map((DeadlineItem e) => e.toJson()).toList()),
-    );
+    await _saveLessons();
     await _syncReminders();
   }
 
@@ -235,6 +235,71 @@ class _TaskHubAppState extends State<TaskHubApp> {
                   ),
                 );
                 return Scaffold(
+                  appBar: AppBar(
+                    title: Text(
+                      TaskHubApi.shared.userId == null
+                          ? 'TaskHub · On this device'
+                          : 'TaskHub · Cloud planner',
+                    ),
+                    bottom: _sync.error == null
+                        ? null
+                        : PreferredSize(
+                            preferredSize: const Size.fromHeight(108),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Column(
+                                children: [
+                                  Text(_sync.error!, maxLines: 2),
+                                  if (_sync.conflict)
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        TextButton(
+                                          onPressed: () async {
+                                            try {
+                                              await _sync.resolve(
+                                                keepLocal: false,
+                                              );
+                                            } catch (_) {
+                                              /* Retry remains available. */
+                                            }
+                                          },
+                                          child: const Text(
+                                            'Use cloud version',
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () async {
+                                            try {
+                                              await _sync.resolve(
+                                                keepLocal: true,
+                                              );
+                                            } catch (_) {
+                                              /* Retry remains available. */
+                                            }
+                                          },
+                                          child: const Text('Keep this device'),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                    actions: [
+                      if (TaskHubApi.shared.userId != null)
+                        TextButton(
+                          onPressed: _sync.importGuest,
+                          child: const Text('Import guest planner'),
+                        ),
+                      IconButton(
+                        onPressed: _sync.sync,
+                        icon: const Icon(Icons.sync),
+                        tooltip: 'Sync planner',
+                      ),
+                    ],
+                  ),
                   body: SafeArea(
                     child: wide
                         ? Row(

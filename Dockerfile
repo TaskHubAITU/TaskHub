@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-RUN useradd --uid 10001 --create-home taskhub && mkdir /data && chown taskhub /data
+RUN useradd --uid 10001 --create-home taskhub && mkdir /data /backups && chown taskhub /data /backups
 WORKDIR /app
 COPY backend /app/backend
 USER taskhub

@@ -18,6 +18,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+from backend.accounts import manage, recover
 
 DB_PATH = Path(os.environ.get("TASKHUB_DB", "taskhub.sqlite3"))
 SESSION_LIFETIME = 30 * 24 * 3600
@@ -85,7 +86,7 @@ def initialize(path: Path = DB_PATH):
     with database(path) as db:
         db.execute("PRAGMA journal_mode=WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 1:
+        if version > 2:
             raise RuntimeError("Database schema is newer than this application")
         db.executescript("""
             CREATE TABLE IF NOT EXISTS auth_attempts (
@@ -134,7 +135,11 @@ def initialize(path: Path = DB_PATH):
                 FOREIGN KEY(group_id, user_id) REFERENCES group_members(group_id, user_id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
-            PRAGMA user_version=1;
+            CREATE TABLE IF NOT EXISTS recovery_codes (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                code_hash BLOB NOT NULL
+            );
+            PRAGMA user_version=2;
         """)
 
 
@@ -282,9 +287,20 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             route = urlsplit(self.path).path
             method = self.command
             if (method, route) == ("GET", "/health"):
+                with database(path) as db:
+                    db.execute("SELECT 1 FROM users LIMIT 1").fetchone()
                 return self._send(200, {"status": "ok"})
             if method == "GET" and not route.startswith("/api/") and self._web(route):
                 return
+            if route == "/api/v1/auth/recover" and method == "POST":
+                client = self.client_address[0]
+                if os.environ.get("TASKHUB_TRUST_PROXY") == "1":
+                    client = self.headers.get("X-Real-IP", client)
+                if not auth_allowed(path, client):
+                    return self._send(429, {"error": "too_many_attempts"})
+                data = self._body()
+                with database(path) as db:
+                    return self._send(*recover(db, data))
             if route in ("/api/v1/auth/register", "/api/v1/auth/login") and method == "POST":
                 client = self.client_address[0]
                 if os.environ.get("TASKHUB_TRUST_PROXY") == "1":
@@ -333,6 +349,14 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                     if user is None:
                         return self._send(401, {"error": "unauthorized"})
                     user_id = user["id"]
+                    if method == "POST" and route in ("/api/v1/account/password", "/api/v1/account/delete", "/api/v1/account/recovery-code"):
+                        data = self._body()
+                        # Reauthentication is rate limited by account, independent of IP.
+                        if not auth_allowed(path, "account:" + str(user_id)):
+                            return self._send(429, {"error": "too_many_attempts"})
+                        return self._send(*manage(db, user_id, route.rsplit("/", 1)[1], data))
+                    # Membership, deadline existence and writes share one transaction.
+                    db.execute("BEGIN IMMEDIATE" if method in ("POST", "PUT") else "BEGIN")
                     if (method, route) == ("GET", "/api/v1/auth/me"):
                         return self._send(200, {"id": user["id"], "email": user["email"]})
                     if (method, route) == ("POST", "/api/v1/auth/logout"):

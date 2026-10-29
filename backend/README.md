@@ -74,9 +74,10 @@ Group deadlines are shared, but completion is personal: PUT
 completion value; another member's checkbox is unaffected. Group owners cannot
 leave their own group. Removing a deadline clears its completion records.
 
-The Flutter Groups tab uses these endpoints. The original personal Schedule and
-Deadlines tabs still keep their data in SharedPreferences; personal cloud sync
-is not wired up yet.
+Flutter uses these endpoints for groups and personal cloud planners. Guest data
+is separate; use Import guest planner after signing in to copy it explicitly.
+Pending edits are stored per account. Revision conflicts require an explicit
+choice and retain the discarded version locally for recovery.
 
 
 ## Reliability and hosting boundaries
@@ -90,6 +91,10 @@ paths, traversal outside the web root and extensions outside its asset allowlist
 including SQLite and Python files. The web directory must contain only public
 build assets; JSON files there are public too.
 
-This remains a development HTTP server. Personal Flutter cloud synchronization,
-login rate limiting, production serving, schema migrations and automated backups
-still need implementation before considering the whole system production ready.
+Deploy the bounded API behind Caddy using compose.yaml. See deploy/README.md
+and deploy/RELEASE_CHECKLIST.md for infrastructure setup and release acceptance.
+Schema version 2 adds hashed one-use recovery codes. POST account/password,
+account/recovery-code and account/delete under /api/v1 require the current
+password. POST /api/v1/auth/recover accepts email, recoveryCode and newPassword;
+it consumes the code and revokes all sessions. Account deletion removes owned
+groups as well as the personal planner.

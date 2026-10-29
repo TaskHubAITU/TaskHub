@@ -1,85 +1,9 @@
-import 'dart:convert';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:http/http.dart' as http;
+
+import 'taskhub_api.dart';
+import 'account_actions.dart';
 
 import 'main.dart';
-
-const String _configuredApiUrl = String.fromEnvironment('TASKHUB_API_URL');
-
-bool get _pagesDemoWithoutApi =>
-    kIsWeb && Uri.base.host.endsWith('.github.io') && _configuredApiUrl.isEmpty;
-
-String get taskHubApiUrl => _configuredApiUrl.isNotEmpty
-    ? _configuredApiUrl.replaceFirst(RegExp(r'/$'), '')
-    : kIsWeb
-    ? Uri.base.origin
-    : 'http://10.0.2.2:8000';
-
-class _ApiError implements Exception {
-  const _ApiError(this.message);
-  final String message;
-  @override
-  String toString() => message;
-}
-
-class _GroupApi {
-  static const _storage = FlutterSecureStorage();
-  String? token;
-
-  Future<void> restore() async {
-    token = await _storage.read(key: 'taskhub_token');
-  }
-
-  Future<Map<String, dynamic>> call(
-    String method,
-    String path, [
-    Map<String, dynamic>? data,
-  ]) async {
-    final request = http.Request(method, Uri.parse('$taskHubApiUrl$path'));
-    request.headers['Content-Type'] = 'application/json';
-    if (token != null) request.headers['Authorization'] = 'Bearer $token';
-    if (data != null) request.body = jsonEncode(data);
-    final streamed = await request.send().timeout(const Duration(seconds: 12));
-    final body = await http.Response.fromStream(streamed);
-    final decoded = jsonDecode(body.body) as Map<String, dynamic>;
-    if (body.statusCode >= 400) {
-      if (body.statusCode == 401) {
-        token = null;
-        await _storage.delete(key: 'taskhub_token');
-      }
-      throw _ApiError(
-        '${decoded['error'] ?? 'Request failed'} (${body.statusCode})',
-      );
-    }
-    return decoded;
-  }
-
-  Future<void> authenticate(
-    String email,
-    String password,
-    bool register,
-  ) async {
-    final result = await call(
-      'POST',
-      '/api/v1/auth/${register ? 'register' : 'login'}',
-      {'email': email, 'password': password},
-    );
-    token = result['token'] as String;
-    await _storage.write(key: 'taskhub_token', value: token);
-  }
-
-  Future<void> logout() async {
-    try {
-      await call('POST', '/api/v1/auth/logout');
-    } finally {
-      token = null;
-      await _storage.delete(key: 'taskhub_token');
-    }
-  }
-}
 
 class GroupHubPage extends StatefulWidget {
   const GroupHubPage({required this.onDeadlinesChanged, super.key});
@@ -90,7 +14,7 @@ class GroupHubPage extends StatefulWidget {
 }
 
 class _GroupHubPageState extends State<GroupHubPage> {
-  final _api = _GroupApi();
+  final _api = TaskHubApi.shared;
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _name = TextEditingController();
@@ -105,7 +29,7 @@ class _GroupHubPageState extends State<GroupHubPage> {
   @override
   void initState() {
     super.initState();
-    if (!_pagesDemoWithoutApi) {
+    if (!pagesDemoWithoutApi) {
       _restore();
     }
   }
@@ -121,7 +45,7 @@ class _GroupHubPageState extends State<GroupHubPage> {
 
   Future<void> _restore() async {
     await _perform(() async {
-      await _api.restore();
+      // The app restores the shared session before constructing this page.
       if (_api.token != null) await _load();
     });
   }
@@ -258,7 +182,7 @@ class _GroupHubPageState extends State<GroupHubPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_pagesDemoWithoutApi) {
+    if (pagesDemoWithoutApi) {
       return Column(
         children: <Widget>[
           const TaskHubHeader(subtitle: 'Shared class groups'),
@@ -298,7 +222,13 @@ class _GroupHubPageState extends State<GroupHubPage> {
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 40),
             children: [
               if (_api.token == null) ...[
-                const Text('Sign in to share your group schedule'),
+                const Text('Sign in to sync your planner and share groups'),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _perform(() => accountAction(context, 'recover')),
+                  child: const Text('Recover account with code'),
+                ),
                 TextField(
                   controller: _email,
                   keyboardType: TextInputType.emailAddress,
@@ -321,6 +251,7 @@ class _GroupHubPageState extends State<GroupHubPage> {
                             _password.text,
                             _register,
                           );
+                          if (!mounted) return;
                           _password.clear();
                           await _load();
                         }),
@@ -335,6 +266,37 @@ class _GroupHubPageState extends State<GroupHubPage> {
                   ),
                 ),
               ] else ...[
+                Wrap(
+                  children: [
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => _perform(
+                              () => accountAction(context, 'password'),
+                            ),
+                      child: const Text('Change password'),
+                    ),
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => _perform(
+                              () => accountAction(context, 'recovery-code'),
+                            ),
+                      child: const Text('Recovery code'),
+                    ),
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => _perform(() async {
+                              await accountAction(context, 'delete');
+                              if (_api.token == null) {
+                                widget.onDeadlinesChanged([]);
+                              }
+                            }),
+                      child: const Text('Delete account'),
+                    ),
+                  ],
+                ),
                 Row(
                   children: [
                     const Expanded(
@@ -355,6 +317,7 @@ class _GroupHubPageState extends State<GroupHubPage> {
                           ? null
                           : () => _perform(() async {
                               await _api.logout();
+                              if (!mounted) return;
                               widget.onDeadlinesChanged([]);
                               setState(() {
                                 _groups = [];
