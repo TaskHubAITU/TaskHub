@@ -59,3 +59,20 @@ Use deploy/check-health.sh on an independent monitor with TASKHUB_URL and option
 TASKHUB_ALERT_WEBHOOK. These infrastructure destinations are deployment settings.
 
 See RELEASE_CHECKLIST.md for remaining verification on the actual target host.
+
+## Android release signing
+
+Android CI builds a debug APK to validate compilation. A distributable release
+requires your retained signing key. Keep `android/key.properties` outside git:
+
+```properties
+storeFile=/absolute/path/to/taskhub-release.jks
+storePassword=YOUR_SECRET
+keyAlias=YOUR_ALIAS
+keyPassword=YOUR_SECRET
+```
+
+Then build with `flutter build appbundle --release
+--dart-define=TASKHUB_API_URL=https://YOUR_DOMAIN` on one line. Without the file,
+release output is unsigned. Never distribute an APK signed with a debug key.
+Retain the existing application ID to preserve upgrades for existing installs.

@@ -12,7 +12,7 @@ jobs:
       - run: TASKHUB_DOMAIN=example.com docker compose config --quiet
       - run: docker run --rm -e TASKHUB_DOMAIN=example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - run: docker run --rm taskhub:test python -m unittest discover -s backend/tests -v
-      - run: TASKHUB_DOMAIN=example.com docker compose up -d --build --wait api backup
+      - run: TASKHUB_DOMAIN=example.com docker compose up -d --build --wait --wait-timeout 180 api backup
       - run: docker compose --env-file /dev/null ps
         env:
           TASKHUB_DOMAIN: example.com
