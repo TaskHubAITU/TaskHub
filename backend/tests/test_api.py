@@ -179,7 +179,10 @@ class ReliabilityTest(unittest.TestCase):
         def failing_database(path):
             with original(path) as db:
                 yield db
-                raise sqlite3.OperationalError("simulated commit failure")
+                # Let the preceding auth-rate transaction commit. Fail only after
+                # registration has inserted the account, before its commit.
+                if db.execute('SELECT COUNT(*) FROM users').fetchone()[0]:
+                    raise sqlite3.OperationalError("simulated commit failure")
 
         credentials = {'email': 'rollback@example.com', 'password': 'long password 123'}
         with patch.object(app, 'database', failing_database):
