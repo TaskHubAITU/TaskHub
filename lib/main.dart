@@ -744,6 +744,7 @@ class _LessonEditorState extends State<LessonEditor> {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
       initialTime: start ? _start : _end,
+      initialEntryMode: TimePickerEntryMode.inputOnly,
     );
     if (picked == null) return;
 
@@ -1250,6 +1251,7 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
     final TimeOfDay? time = await showTimePicker(
       context: context,
       initialTime: _time,
+      initialEntryMode: TimePickerEntryMode.inputOnly,
     );
     if (time != null) setState(() => _time = time);
   }
