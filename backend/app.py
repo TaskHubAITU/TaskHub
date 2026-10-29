@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +36,8 @@ def valid_items(items, kind):
             return False
         if not item["id"] or item["id"] in ids or not item["subject"]:
             return False
+        if not item["subject"].strip():
+            return False
         ids.add(item["id"])
         if any(type(item[key]) is not int for key in ("colorValue", "iconCodePoint")):
             return False
@@ -42,6 +45,20 @@ def valid_items(items, kind):
             return False
         if kind == "deadlines" and type(item["completed"]) is not bool:
             return False
+        if kind == "lessons":
+            if item["day"] not in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
+                return False
+            if any(not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item[key]) for key in ("start", "end")):
+                return False
+            if item["start"] >= item["end"]:
+                return False
+        else:
+            if not item["title"].strip() or "T" not in item["due"]:
+                return False
+            try:
+                datetime.fromisoformat(item["due"].replace("Z", "+00:00"))
+            except ValueError:
+                return False
     return True
 
 
@@ -118,7 +135,14 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
         server_version = "TaskHubAPI/1"
 
         def _send(self, status: int, data: dict):
-            body = json.dumps(data, separators=(",", ":")).encode("utf-8")
+            # Emit only after the route's database context has committed.
+            if getattr(self, "_defer_response", False):
+                self._pending_response = (status, data)
+                return
+            self._emit(status, data)
+
+        def _emit(self, status: int, data: dict):
+            body = b"" if status == HTTPStatus.NO_CONTENT else json.dumps(data, separators=(",", ":")).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -160,7 +184,13 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
                 return False
             # Flutter uses path URLs for assets. Unknown routes without an
             # extension fall back to the app shell for browser navigation.
-            candidate = (web_dir / route.lstrip("/")).resolve()
+            relative = Path(route.lstrip("/"))
+            # A misplaced database, configuration or source file is never an asset.
+            extensions = {".html", ".js", ".css", ".json", ".wasm", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".ttf", ".otf", ".woff", ".woff2", ".bin", ".frag"}
+            if any(part.startswith(".") for part in relative.parts) or (relative.suffix and relative.suffix.lower() not in extensions):
+                self._send(404, {"error": "not_found"})
+                return True
+            candidate = (web_dir / relative).resolve()
             if not candidate.is_relative_to(web_dir):
                 self._send(404, {"error": "not_found"})
                 return True
@@ -416,12 +446,18 @@ def make_handler(path: Path = DB_PATH, web_dir: Path | None = None):
             self._handle()
 
         def _handle(self):
+            self._defer_response = True
+            self._pending_response = None
             try:
                 self._route()
             except ValueError as exc:
                 self._send(400, {"error": "bad_request", "message": str(exc)})
             except sqlite3.Error:
                 self._send(500, {"error": "database_error"})
+            finally:
+                self._defer_response = False
+            if self._pending_response is not None:
+                self._emit(*self._pending_response)
 
     return Handler
 
