@@ -67,9 +67,14 @@ assets/map/                 Room data and floor maps
 
 TaskHub is a working student project and is still being improved. Planned improvements include refining the interface, collecting more usability feedback, and making common actions even easier to find.
 
-## Contributors
+## Team
 
-TaskHub is a collaborative student project. See the [contributors and commit history](https://github.com/alikhansabargazy/Android-TaskHub/graphs/contributors) for recorded contributions.
+- Zhiger
+- Alikhan
+- Islambek
+- Altaiyr
+
+See the [GitHub contributors and commit history](https://github.com/alikhansabargazy/Android-TaskHub/graphs/contributors) for recorded code contributions.
 
 ---
 
