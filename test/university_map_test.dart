@@ -57,12 +57,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Все'), findsOneWidget);
+    expect(find.text('Zoom in'), findsNothing);
     await tester.enterText(find.byType(TextField), 'с1.2.346');
     await tester.pumpAndSettle();
     expect(find.text('C1.2.346'), findsOneWidget);
     await tester.tap(find.text('C1.2.346'));
     await tester.pumpAndSettle();
-    expect(find.text('Здание C1 · корпус 2 · этаж 3'), findsOneWidget);
+    expect(find.text('C1.2 · 3 этаж'), findsOneWidget);
     expect(
       find.descendant(of: find.byType(Card), matching: find.text('C1.2.346')),
       findsOneWidget,
@@ -75,8 +77,9 @@ void main() {
       viewer.transformationController!.value,
       room.bounds.center,
     );
-    expect(point.dx, closeTo(195, 1));
-    expect(point.dy, closeTo(422, 1));
+    final viewport = tester.getSize(find.byType(InteractiveViewer));
+    expect(point.dx, closeTo(viewport.width / 2, 1));
+    expect(point.dy, closeTo(viewport.height / 2, 1));
 
     await tester.enterText(find.byType(TextField), 'C1.2.345');
     await tester.pumpAndSettle();

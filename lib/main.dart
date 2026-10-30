@@ -44,6 +44,13 @@ const List<IconData> kSubjectIcons = <IconData>[
   Icons.design_services_rounded,
 ];
 
+IconData iconForCodePoint(int codePoint) {
+  for (final icon in kSubjectIcons) {
+    if (icon.codePoint == codePoint) return icon;
+  }
+  return Icons.flag_rounded;
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const TaskHubApp());
@@ -315,7 +322,7 @@ class _SchedulePageState extends State<SchedulePage> {
             padding: const EdgeInsets.symmetric(horizontal: 18),
             scrollDirection: Axis.horizontal,
             itemCount: kDays.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (BuildContext context, int index) {
               final bool selected = index == _selectedDay;
               return ChoiceChip(
@@ -591,10 +598,7 @@ class LessonCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color color = Color(lesson.colorValue);
-    final IconData icon = IconData(
-      lesson.iconCodePoint,
-      fontFamily: 'MaterialIcons',
-    );
+    final IconData icon = iconForCodePoint(lesson.iconCodePoint);
 
     return Container(
       decoration: BoxDecoration(
@@ -726,10 +730,7 @@ class _LessonEditorState extends State<LessonEditor> {
       _start = parseTime(lesson.start);
       _end = parseTime(lesson.end);
       _color = Color(lesson.colorValue);
-      _icon = IconData(
-        lesson.iconCodePoint,
-        fontFamily: 'MaterialIcons',
-      );
+      _icon = iconForCodePoint(lesson.iconCodePoint);
     }
   }
 
@@ -1082,7 +1083,7 @@ class DeadlinesPage extends StatelessWidget {
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(18, 4, 18, 100),
                   itemCount: sorted.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (BuildContext context, int index) {
                     final DeadlineItem item = sorted[index];
                     return DeadlineCard(
@@ -1141,10 +1142,7 @@ class DeadlineCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
-                IconData(
-                  item.iconCodePoint,
-                  fontFamily: 'MaterialIcons',
-                ),
+                iconForCodePoint(item.iconCodePoint),
                 color: color,
               ),
             ),
