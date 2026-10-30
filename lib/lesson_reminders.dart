@@ -18,11 +18,13 @@ class FirstLessonReminder {
     required this.weekday,
     required this.lesson,
     required this.scheduledAt,
+    required this.imminentStartAt,
   });
 
   final int weekday;
   final ReminderLesson lesson;
   final DateTime scheduledAt;
+  final DateTime? imminentStartAt;
 
   int get id => 42000 + weekday;
   String get title => 'Первая пара через 10 минут';
@@ -65,6 +67,11 @@ List<FirstLessonReminder> planFirstLessonReminders(
         weekday: entry.key,
         lesson: entry.value.lesson,
         scheduledAt: _nextReminderAt(now, entry.key, entry.value.minutes),
+        imminentStartAt: _imminentClassStart(
+          now,
+          entry.key,
+          entry.value.minutes,
+        ),
       ),
   ]..sort((a, b) => a.weekday.compareTo(b.weekday));
 }
@@ -83,11 +90,36 @@ DateTime _nextReminderAt(DateTime now, int weekday, int minutes) {
   return upcoming.isAfter(now) ? upcoming : reminderFor(7);
 }
 
+DateTime? _imminentClassStart(DateTime now, int weekday, int minutes) {
+  final daysAhead = (weekday - now.weekday + 7) % 7;
+  final startsAt = DateTime(
+    now.year,
+    now.month,
+    now.day + daysAhead,
+    minutes ~/ 60,
+    minutes % 60,
+  );
+  if (!startsAt.isAfter(now)) return null;
+  return startsAt.subtract(const Duration(minutes: 10)).isAfter(now)
+      ? null
+      : startsAt;
+}
+
 abstract class LessonReminderScheduler {
   Future<void> sync(List<ReminderLesson> lessons);
 }
 
 class LocalLessonReminderScheduler implements LessonReminderScheduler {
+  static const _details = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'first_lesson',
+      'Первая пара',
+      channelDescription: 'Напоминание перед первой парой',
+      importance: Importance.high,
+      priority: Priority.high,
+    ),
+  );
+
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
   bool _androidCanScheduleExact = true;
@@ -175,15 +207,7 @@ class LocalLessonReminderScheduler implements LessonReminderScheduler {
               title: reminder.title,
               body: reminder.body,
               scheduledDate: tz.TZDateTime.from(reminder.scheduledAt, tz.local),
-              notificationDetails: const NotificationDetails(
-                android: AndroidNotificationDetails(
-                  'first_lesson',
-                  'Первая пара',
-                  channelDescription: 'Напоминание перед первой парой',
-                  importance: Importance.high,
-                  priority: Priority.high,
-                ),
-              ),
+              notificationDetails: _details,
               androidScheduleMode: mode,
               matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
             );
@@ -198,6 +222,23 @@ class LocalLessonReminderScheduler implements LessonReminderScheduler {
           _androidCanScheduleExact = false;
           await schedule(AndroidScheduleMode.inexactAllowWhileIdle);
         }
+      }
+      final prefs = await SharedPreferences.getInstance();
+      for (final reminder in reminders) {
+        final startsAt = reminder.imminentStartAt;
+        if (startsAt == null || !startsAt.isAfter(DateTime.now())) continue;
+        final key =
+            '${startsAt.toIso8601String()}|${reminder.lesson.subject}|'
+            '${reminder.lesson.room}';
+        final prefKey = 'taskhub_imminent_first_lesson_${reminder.weekday}';
+        if (prefs.getString(prefKey) == key) continue;
+        await _plugin.show(
+          id: 43000 + reminder.weekday,
+          title: 'Первая пара скоро',
+          body: reminder.body,
+          notificationDetails: _details,
+        );
+        await prefs.setString(prefKey, key);
       }
     } catch (error) {
       debugPrint('Не удалось запланировать уведомления: $error');

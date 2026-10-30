@@ -236,6 +236,7 @@ class _TaskHubAppState extends State<TaskHubApp> {
               body: Center(child: CircularProgressIndicator()),
             )
           : Scaffold(
+              resizeToAvoidBottomInset: false,
               body: SafeArea(
                 child: IndexedStack(
                   index: _tab,

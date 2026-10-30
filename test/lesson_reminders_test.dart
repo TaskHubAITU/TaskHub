@@ -16,6 +16,7 @@ void main() {
 
     expect(reminders, hasLength(2));
     expect(reminders[0].scheduledAt, DateTime(2026, 11, 2, 8, 20));
+    expect(reminders[0].imminentStartAt, isNull);
     expect(reminders[0].body, 'Math в 08:30 · кабинет C1.1.143');
     expect(reminders[1].scheduledAt, DateTime(2026, 11, 3, 8, 50));
     expect(reminders[1].body, 'Physics в 09:00 · кабинет не указан');
@@ -31,6 +32,21 @@ void main() {
       DateTime(2026, 11, 2, 8, 20),
     ).single;
 
+    expect(reminder.scheduledAt, DateTime(2026, 11, 9, 8, 20));
+    expect(reminder.imminentStartAt, DateTime(2026, 11, 2, 8, 30));
+  });
+
+  test('recognizes a first class starting in under ten minutes', () {
+    const lessons = <ReminderLesson>[
+      (day: 'Monday', subject: 'Math', start: '08:30', room: 'C1.1.143'),
+    ];
+
+    final reminder = planFirstLessonReminders(
+      lessons,
+      DateTime(2026, 11, 2, 8, 25),
+    ).single;
+
+    expect(reminder.imminentStartAt, DateTime(2026, 11, 2, 8, 30));
     expect(reminder.scheduledAt, DateTime(2026, 11, 9, 8, 20));
   });
 }
