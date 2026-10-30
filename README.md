@@ -63,6 +63,17 @@ assets/map/                 Room data and floor maps
   <img src="docs/screenshots/map.png" alt="TaskHub campus map" width="250" />
 </p>
 
+## Future Plans / Roadmap
+
+These features are planned ideas, not part of the current release:
+
+- **Schedule Import** — import classes instead of entering every lesson manually.
+- **Cloud Sync** — keep schedules and deadlines in sync across devices.
+- **Group Schedules** — share a timetable with classmates.
+- **Smart Notifications** — more flexible reminders for classes and assignments.
+- **Campus Navigation** — improve room finding and movement between university buildings.
+- **AITU LMS Integration** — explore importing course information and deadlines if access becomes available.
+
 ## Project Status
 
 TaskHub is a working student project and is still being improved. Planned improvements include refining the interface, collecting more usability feedback, and making common actions even easier to find.
