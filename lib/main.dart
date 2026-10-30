@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'map_page.dart';
 
 const Color kMilk = Color(0xFFF7F4ED);
 const Color kCard = Color(0xFFFFFDF8);
@@ -1422,108 +1422,6 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class MapPage extends StatefulWidget {
-  const MapPage({super.key});
-
-  @override
-  State<MapPage> createState() => _MapPageState();
-}
-
-class _MapPageState extends State<MapPage> {
-  late final WebViewController _controller;
-  int _progress = 0;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {
-            if (mounted) setState(() => _progress = progress);
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse('https://yuujiso.github.io/aitumap'));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: <Widget>[
-        const TaskHubHeader(subtitle: 'AITU campus map'),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  'University Map',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineMedium
-                      ?.copyWith(fontSize: 28),
-                ),
-              ),
-              IconButton.filledTonal(
-                tooltip: 'Reload',
-                onPressed: _controller.reload,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEAF2FF),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFD6E5FF)),
-            ),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Icon(Icons.info_outline_rounded, color: kBlue, size: 20),
-                SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'Zoom in and tap room or area labels to find your classroom. '
-                    'Use the room code from your schedule as a guide.',
-                    style: TextStyle(
-                      color: kText,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (_progress < 100)
-          LinearProgressIndicator(
-            value: _progress == 0 ? null : _progress / 100,
-          ),
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: kCard,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xFFE5E0D6)),
-            ),
-            child: WebViewWidget(controller: _controller),
-          ),
-        ),
-      ],
     );
   }
 }
