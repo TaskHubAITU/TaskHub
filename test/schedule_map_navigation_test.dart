@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taskhub/main.dart';
+import 'package:taskhub/lesson_reminders.dart';
 import 'package:taskhub/university_map_data.dart';
 
 void main() {
@@ -34,7 +35,9 @@ void main() {
     final catalog = MapCatalog.fromJson(
       File('assets/map/aitu_rooms.json').readAsStringSync(),
     );
-    await tester.pumpWidget(TaskHubApp(mapCatalog: catalog));
+    await tester.pumpWidget(
+      TaskHubApp(mapCatalog: catalog, reminderScheduler: _NoopReminders()),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Показать кабинет на карте'));
     await tester.pumpAndSettle();
@@ -48,4 +51,9 @@ void main() {
     );
     expect(find.text('C1.2 · 3 этаж'), findsOneWidget);
   });
+}
+
+class _NoopReminders implements LessonReminderScheduler {
+  @override
+  Future<void> sync(List<ReminderLesson> lessons) async {}
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'lesson_reminders.dart';
 import 'map_page.dart';
 import 'university_map_data.dart';
 
@@ -58,9 +59,10 @@ void main() {
 }
 
 class TaskHubApp extends StatefulWidget {
-  const TaskHubApp({super.key, this.mapCatalog});
+  const TaskHubApp({super.key, this.mapCatalog, this.reminderScheduler});
 
   final MapCatalog? mapCatalog;
+  final LessonReminderScheduler? reminderScheduler;
 
   @override
   State<TaskHubApp> createState() => _TaskHubAppState();
@@ -73,6 +75,9 @@ class _TaskHubAppState extends State<TaskHubApp> {
   bool _loading = true;
   List<Lesson> _lessons = <Lesson>[];
   List<DeadlineItem> _deadlines = <DeadlineItem>[];
+  late final LessonReminderScheduler _reminderScheduler =
+      widget.reminderScheduler ?? LocalLessonReminderScheduler();
+  Future<void> _reminderWork = Future.value();
 
   @override
   void initState() {
@@ -98,6 +103,22 @@ class _TaskHubAppState extends State<TaskHubApp> {
           .toList();
       _loading = false;
     });
+    await _syncReminders();
+  }
+
+  Future<void> _syncReminders() {
+    final lessons = [
+      for (final lesson in _lessons)
+        (
+          day: lesson.day,
+          subject: lesson.subject,
+          start: lesson.start,
+          room: lesson.room,
+        ),
+    ];
+    return _reminderWork = _reminderWork.then(
+      (_) => _reminderScheduler.sync(lessons),
+    );
   }
 
   Future<void> _saveLessons() async {
@@ -119,6 +140,7 @@ class _TaskHubAppState extends State<TaskHubApp> {
   Future<void> _addLesson(Lesson lesson) async {
     setState(() => _lessons = <Lesson>[..._lessons, lesson]);
     await _saveLessons();
+    await _syncReminders();
   }
 
   Future<void> _updateLesson(Lesson lesson) async {
@@ -128,16 +150,19 @@ class _TaskHubAppState extends State<TaskHubApp> {
           .toList();
     });
     await _saveLessons();
+    await _syncReminders();
   }
 
   Future<void> _deleteLesson(String id) async {
     setState(() => _lessons = _lessons.where((Lesson e) => e.id != id).toList());
     await _saveLessons();
+    await _syncReminders();
   }
 
   Future<void> _clearSchedule() async {
     setState(() => _lessons = <Lesson>[]);
     await _saveLessons();
+    await _syncReminders();
   }
 
   void _showRoomOnMap(String room) {
