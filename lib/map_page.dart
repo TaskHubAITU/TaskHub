@@ -21,10 +21,18 @@ class MapRoomRequest {
 }
 
 class MapPage extends StatefulWidget {
-  const MapPage({super.key, this.catalog, this.roomRequest});
+  const MapPage({
+    super.key,
+    this.catalog,
+    this.roomRequest,
+    this.notificationsEnabled = true,
+    this.onToggleNotifications,
+  });
 
   final MapCatalog? catalog;
   final MapRoomRequest? roomRequest;
+  final bool notificationsEnabled;
+  final VoidCallback? onToggleNotifications;
 
   @override
   State<MapPage> createState() => _MapPageState();
@@ -300,16 +308,31 @@ class _MapPageState extends State<MapPage> {
                             ],
                           ),
                         ),
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE7F0FF),
+                        Material(
+                          color: widget.notificationsEnabled
+                              ? const Color(0xFFE7F0FF)
+                              : const Color(0xFFE8E8E8),
+                          borderRadius: BorderRadius.circular(15),
+                          child: InkWell(
+                            onTap: widget.onToggleNotifications,
                             borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: const Icon(
-                            Icons.notifications_none_rounded,
-                            color: _blue,
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Tooltip(
+                                message: widget.notificationsEnabled
+                                    ? 'Отключить уведомления'
+                                    : 'Включить уведомления',
+                                child: Icon(
+                                  widget.notificationsEnabled
+                                      ? Icons.notifications_active_outlined
+                                      : Icons.notifications_off_outlined,
+                                  color: widget.notificationsEnabled
+                                      ? _blue
+                                      : _muted,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -359,7 +382,7 @@ class _MapPageState extends State<MapPage> {
                           SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Нажмите на кабинет на карте или найдите его по номеру.',
+                              'Select a room on the map or search for it by room number.',
                               style: TextStyle(
                                 color: _ink,
                                 fontSize: 14,

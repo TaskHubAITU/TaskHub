@@ -51,9 +51,51 @@ void main() {
     );
     expect(find.text('C1.2 · 3 этаж'), findsOneWidget);
   });
+
+  testWidgets('notification button saves disabled state and clears lessons',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'taskhub_lessons': jsonEncode([
+        Lesson(
+          id: 'lesson-1',
+          day: 'Monday',
+          subject: 'Math',
+          room: 'C1.1.143',
+          start: '09:00',
+          end: '10:00',
+          colorValue: kSubjectColors.first.toARGB32(),
+          iconCodePoint: kSubjectIcons.first.codePoint,
+        ).toJson(),
+      ]),
+      'taskhub_deadlines': '[]',
+    });
+    final scheduler = _RecordingReminders();
+    await tester.pumpWidget(TaskHubApp(reminderScheduler: scheduler));
+    await tester.pumpAndSettle();
+    expect(scheduler.calls.last, hasLength(1));
+
+    await tester.tap(find.byTooltip('Отключить уведомления'));
+    await tester.pumpAndSettle();
+    expect(scheduler.calls.last, isEmpty);
+    expect(
+      (await SharedPreferences.getInstance())
+          .getBool('taskhub_notifications_enabled'),
+      false,
+    );
+    expect(find.byTooltip('Включить уведомления'), findsOneWidget);
+  });
 }
 
 class _NoopReminders implements LessonReminderScheduler {
   @override
   Future<void> sync(List<ReminderLesson> lessons) async {}
+}
+
+class _RecordingReminders implements LessonReminderScheduler {
+  final calls = <List<ReminderLesson>>[];
+
+  @override
+  Future<void> sync(List<ReminderLesson> lessons) async {
+    calls.add(lessons);
+  }
 }

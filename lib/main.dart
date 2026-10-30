@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'deadline_reminders.dart';
 import 'lesson_reminders.dart';
 import 'map_page.dart';
 import 'university_map_data.dart';
@@ -75,8 +77,11 @@ class _TaskHubAppState extends State<TaskHubApp> {
   bool _loading = true;
   List<Lesson> _lessons = <Lesson>[];
   List<DeadlineItem> _deadlines = <DeadlineItem>[];
+  bool _notificationsEnabled = true;
   late final LessonReminderScheduler _reminderScheduler =
       widget.reminderScheduler ?? LocalLessonReminderScheduler();
+  final LocalDeadlineReminderScheduler _deadlineReminderScheduler =
+      LocalDeadlineReminderScheduler();
   Future<void> _reminderWork = Future.value();
 
   @override
@@ -90,8 +95,9 @@ class _TaskHubAppState extends State<TaskHubApp> {
 
     final List<dynamic> lessonJson =
         jsonDecode(prefs.getString('taskhub_lessons') ?? '[]') as List<dynamic>;
-    final List<dynamic> deadlineJson =
-        jsonDecode(prefs.getString('taskhub_deadlines') ?? '[]') as List<dynamic>;
+    final List<dynamic> deadlineJson = jsonDecode(
+      prefs.getString('taskhub_deadlines') ?? '[]',
+    ) as List<dynamic>;
 
     if (!mounted) return;
     setState(() {
@@ -101,14 +107,16 @@ class _TaskHubAppState extends State<TaskHubApp> {
       _deadlines = deadlineJson
           .map((dynamic e) => DeadlineItem.fromJson(e as Map<String, dynamic>))
           .toList();
+      _notificationsEnabled =
+          prefs.getBool('taskhub_notifications_enabled') ?? true;
       _loading = false;
     });
     await _syncReminders();
   }
 
   Future<void> _syncReminders() {
-    final lessons = [
-      for (final lesson in _lessons)
+    final lessons = <ReminderLesson>[
+      for (final lesson in _notificationsEnabled ? _lessons : <Lesson>[])
         (
           day: lesson.day,
           subject: lesson.subject,
@@ -116,9 +124,28 @@ class _TaskHubAppState extends State<TaskHubApp> {
           room: lesson.room,
         ),
     ];
-    return _reminderWork = _reminderWork.then(
-      (_) => _reminderScheduler.sync(lessons),
-    );
+    final deadlines = <ReminderDeadline>[
+      for (final deadline
+          in _notificationsEnabled ? _deadlines : <DeadlineItem>[])
+        (
+          id: deadline.id,
+          title: deadline.title,
+          subject: deadline.subject,
+          due: deadline.due,
+          completed: deadline.completed,
+        ),
+    ];
+    return _reminderWork = _reminderWork.then((_) async {
+      await _reminderScheduler.sync(lessons);
+      await _deadlineReminderScheduler.sync(deadlines);
+    });
+  }
+
+  Future<void> _toggleNotifications() async {
+    setState(() => _notificationsEnabled = !_notificationsEnabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('taskhub_notifications_enabled', _notificationsEnabled);
+    await _syncReminders();
   }
 
   Future<void> _saveLessons() async {
@@ -154,7 +181,9 @@ class _TaskHubAppState extends State<TaskHubApp> {
   }
 
   Future<void> _deleteLesson(String id) async {
-    setState(() => _lessons = _lessons.where((Lesson e) => e.id != id).toList());
+    setState(
+      () => _lessons = _lessons.where((Lesson e) => e.id != id).toList(),
+    );
     await _saveLessons();
     await _syncReminders();
   }
@@ -175,6 +204,7 @@ class _TaskHubAppState extends State<TaskHubApp> {
   Future<void> _addDeadline(DeadlineItem item) async {
     setState(() => _deadlines = <DeadlineItem>[..._deadlines, item]);
     await _saveDeadlines();
+    await _syncReminders();
   }
 
   Future<void> _updateDeadline(DeadlineItem item) async {
@@ -184,6 +214,7 @@ class _TaskHubAppState extends State<TaskHubApp> {
           .toList();
     });
     await _saveDeadlines();
+    await _syncReminders();
   }
 
   Future<void> _toggleDeadline(String id) async {
@@ -194,14 +225,15 @@ class _TaskHubAppState extends State<TaskHubApp> {
       }).toList();
     });
     await _saveDeadlines();
+    await _syncReminders();
   }
 
   Future<void> _deleteDeadline(String id) async {
     setState(() {
-      _deadlines =
-          _deadlines.where((DeadlineItem e) => e.id != id).toList();
+      _deadlines = _deadlines.where((DeadlineItem e) => e.id != id).toList();
     });
     await _saveDeadlines();
+    await _syncReminders();
   }
 
   @override
@@ -219,22 +251,14 @@ class _TaskHubAppState extends State<TaskHubApp> {
         ),
         fontFamily: 'SF Pro Display',
         textTheme: const TextTheme(
-          headlineMedium: TextStyle(
-            color: kText,
-            fontWeight: FontWeight.w800,
-          ),
-          titleLarge: TextStyle(
-            color: kText,
-            fontWeight: FontWeight.w700,
-          ),
+          headlineMedium: TextStyle(color: kText, fontWeight: FontWeight.w800),
+          titleLarge: TextStyle(color: kText, fontWeight: FontWeight.w700),
           bodyLarge: TextStyle(color: kText),
           bodyMedium: TextStyle(color: kMuted),
         ),
       ),
       home: _loading
-          ? const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            )
+          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : Scaffold(
               resizeToAvoidBottomInset: false,
               body: SafeArea(
@@ -242,6 +266,8 @@ class _TaskHubAppState extends State<TaskHubApp> {
                   index: _tab,
                   children: <Widget>[
                     SchedulePage(
+                      notificationsEnabled: _notificationsEnabled,
+                      onToggleNotifications: _toggleNotifications,
                       lessons: _lessons,
                       deadlines: _deadlines,
                       onAddLesson: _addLesson,
@@ -251,6 +277,8 @@ class _TaskHubAppState extends State<TaskHubApp> {
                       onShowRoomOnMap: _showRoomOnMap,
                     ),
                     DeadlinesPage(
+                      notificationsEnabled: _notificationsEnabled,
+                      onToggleNotifications: _toggleNotifications,
                       deadlines: _deadlines,
                       lessons: _lessons,
                       onAdd: _addDeadline,
@@ -259,6 +287,8 @@ class _TaskHubAppState extends State<TaskHubApp> {
                       onDelete: _deleteDeadline,
                     ),
                     MapPage(
+                      notificationsEnabled: _notificationsEnabled,
+                      onToggleNotifications: _toggleNotifications,
                       catalog: widget.mapCatalog,
                       roomRequest: _mapRequest,
                     ),
@@ -297,6 +327,8 @@ class _TaskHubAppState extends State<TaskHubApp> {
 
 class SchedulePage extends StatefulWidget {
   const SchedulePage({
+    required this.notificationsEnabled,
+    required this.onToggleNotifications,
     required this.lessons,
     required this.deadlines,
     required this.onAddLesson,
@@ -308,6 +340,8 @@ class SchedulePage extends StatefulWidget {
   });
 
   final List<Lesson> lessons;
+  final bool notificationsEnabled;
+  final VoidCallback onToggleNotifications;
   final List<DeadlineItem> deadlines;
   final Future<void> Function(Lesson lesson) onAddLesson;
   final Future<void> Function(Lesson lesson) onUpdateLesson;
@@ -347,19 +381,21 @@ class _SchedulePageState extends State<SchedulePage> {
   @override
   Widget build(BuildContext context) {
     final String day = kDays[_selectedDay];
-    final List<Lesson> lessons = widget.lessons
-        .where((Lesson e) => e.day == day)
-        .toList()
-      ..sort((Lesson a, Lesson b) => a.start.compareTo(b.start));
+    final List<Lesson> lessons =
+        widget.lessons.where((Lesson e) => e.day == day).toList()
+          ..sort((Lesson a, Lesson b) => a.start.compareTo(b.start));
 
-    final List<DeadlineItem> upcoming = widget.deadlines
-        .where((DeadlineItem e) => !e.completed)
-        .toList()
-      ..sort((DeadlineItem a, DeadlineItem b) => a.due.compareTo(b.due));
+    final List<DeadlineItem> upcoming =
+        widget.deadlines.where((DeadlineItem e) => !e.completed).toList()
+          ..sort((DeadlineItem a, DeadlineItem b) => a.due.compareTo(b.due));
 
     return Column(
       children: <Widget>[
-        const TaskHubHeader(subtitle: 'Your week, your way'),
+        TaskHubHeader(
+          subtitle: 'Your week, your way',
+          notificationsEnabled: widget.notificationsEnabled,
+          onToggleNotifications: widget.onToggleNotifications,
+        ),
         SizedBox(
           height: 56,
           child: ListView.separated(
@@ -392,16 +428,11 @@ class _SchedulePageState extends State<SchedulePage> {
         if (upcoming.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 18, 2),
-            child: UpcomingDeadlinesCard(
-              items: upcoming.take(3).toList(),
-            ),
+            child: UpcomingDeadlinesCard(items: upcoming.take(3).toList()),
           ),
         Expanded(
           child: lessons.isEmpty
-              ? EmptySchedule(
-                  day: day,
-                  onAdd: _openLessonEditor,
-                )
+              ? EmptySchedule(day: day, onAdd: _openLessonEditor)
               : ListView(
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 120),
                   children: <Widget>[
@@ -410,9 +441,7 @@ class _SchedulePageState extends State<SchedulePage> {
                         Expanded(
                           child: Text(
                             day,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineMedium
+                            style: Theme.of(context).textTheme.headlineMedium
                                 ?.copyWith(fontSize: 28),
                           ),
                         ),
@@ -485,12 +514,8 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 }
 
-
 class UpcomingDeadlinesCard extends StatelessWidget {
-  const UpcomingDeadlinesCard({
-    required this.items,
-    super.key,
-  });
+  const UpcomingDeadlinesCard({required this.items, super.key});
 
   final List<DeadlineItem> items;
 
@@ -566,11 +591,7 @@ class UpcomingDeadlinesCard extends StatelessWidget {
 }
 
 class EmptySchedule extends StatelessWidget {
-  const EmptySchedule({
-    required this.day,
-    required this.onAdd,
-    super.key,
-  });
+  const EmptySchedule({required this.day, required this.onAdd, super.key});
 
   final String day;
   final VoidCallback onAdd;
@@ -744,7 +765,10 @@ class LessonCard extends StatelessWidget {
                                     backgroundColor: const Color(0xFFE7F0FF),
                                     foregroundColor: kBlue,
                                   ),
-                                  icon: const Icon(Icons.map_outlined, size: 18),
+                                  icon: const Icon(
+                                    Icons.map_outlined,
+                                    size: 18,
+                                  ),
                                 ),
                               ),
                           ],
@@ -763,11 +787,7 @@ class LessonCard extends StatelessWidget {
 }
 
 class LessonEditor extends StatefulWidget {
-  const LessonEditor({
-    required this.initialDay,
-    this.initialLesson,
-    super.key,
-  });
+  const LessonEditor({required this.initialDay, this.initialLesson, super.key});
 
   final String initialDay;
   final Lesson? initialLesson;
@@ -830,16 +850,17 @@ class _LessonEditorState extends State<LessonEditor> {
   void _save() {
     final String subject = _subject.text.trim();
     if (subject.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter the subject name')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter the subject name')));
       return;
     }
 
     Navigator.pop(
       context,
       Lesson(
-        id: widget.initialLesson?.id ??
+        id:
+            widget.initialLesson?.id ??
             DateTime.now().microsecondsSinceEpoch.toString(),
         day: _day,
         subject: subject,
@@ -890,10 +911,8 @@ class _LessonEditorState extends State<LessonEditor> {
               ),
               items: kDays
                   .map(
-                    (String day) => DropdownMenuItem<String>(
-                      value: day,
-                      child: Text(day),
-                    ),
+                    (String day) =>
+                        DropdownMenuItem<String>(value: day, child: Text(day)),
                   )
                   .toList(),
               onChanged: (String? value) {
@@ -941,10 +960,7 @@ class _LessonEditorState extends State<LessonEditor> {
             const SizedBox(height: 20),
             const Text(
               'Subject color',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                color: kText,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w800, color: kText),
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -980,10 +996,7 @@ class _LessonEditorState extends State<LessonEditor> {
             const SizedBox(height: 20),
             const Text(
               'Subject icon',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                color: kText,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w800, color: kText),
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -1007,10 +1020,7 @@ class _LessonEditorState extends State<LessonEditor> {
                         width: 2,
                       ),
                     ),
-                    child: Icon(
-                      icon,
-                      color: selected ? _color : kMuted,
-                    ),
+                    child: Icon(icon, color: selected ? _color : kMuted),
                   ),
                 );
               }).toList(),
@@ -1023,7 +1033,9 @@ class _LessonEditorState extends State<LessonEditor> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Text(
-                    widget.initialLesson == null ? 'Save class' : 'Save changes',
+                    widget.initialLesson == null
+                        ? 'Save class'
+                        : 'Save changes',
                   ),
                 ),
               ),
@@ -1037,6 +1049,8 @@ class _LessonEditorState extends State<LessonEditor> {
 
 class DeadlinesPage extends StatelessWidget {
   const DeadlinesPage({
+    required this.notificationsEnabled,
+    required this.onToggleNotifications,
     required this.deadlines,
     required this.lessons,
     required this.onAdd,
@@ -1047,6 +1061,8 @@ class DeadlinesPage extends StatelessWidget {
   });
 
   final List<DeadlineItem> deadlines;
+  final bool notificationsEnabled;
+  final VoidCallback onToggleNotifications;
   final List<Lesson> lessons;
   final Future<void> Function(DeadlineItem item) onAdd;
   final Future<void> Function(DeadlineItem item) onUpdate;
@@ -1058,10 +1074,7 @@ class DeadlinesPage extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: kCard,
-      builder: (_) => DeadlineEditor(
-        lessons: lessons,
-        initialItem: existing,
-      ),
+      builder: (_) => DeadlineEditor(lessons: lessons, initialItem: existing),
     );
 
     if (item == null) return;
@@ -1083,7 +1096,11 @@ class DeadlinesPage extends StatelessWidget {
 
     return Column(
       children: <Widget>[
-        const TaskHubHeader(subtitle: 'Keep deadlines under control'),
+        TaskHubHeader(
+          subtitle: 'Keep deadlines under control',
+          notificationsEnabled: notificationsEnabled,
+          onToggleNotifications: onToggleNotifications,
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
           child: Row(
@@ -1091,9 +1108,7 @@ class DeadlinesPage extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Deadlines',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineMedium
+                  style: Theme.of(context).textTheme.headlineMedium
                       ?.copyWith(fontSize: 28),
                 ),
               ),
@@ -1116,9 +1131,7 @@ class DeadlinesPage extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: kCard,
                         borderRadius: BorderRadius.circular(28),
-                        border: Border.all(
-                          color: const Color(0xFFE8E3DA),
-                        ),
+                        border: Border.all(color: const Color(0xFFE8E3DA)),
                       ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -1199,10 +1212,7 @@ class DeadlineCard extends StatelessWidget {
         ),
         child: Row(
           children: <Widget>[
-            Checkbox(
-              value: item.completed,
-              onChanged: (_) => onToggle(),
-            ),
+            Checkbox(value: item.completed, onChanged: (_) => onToggle()),
             Container(
               width: 44,
               height: 44,
@@ -1210,10 +1220,7 @@ class DeadlineCard extends StatelessWidget {
                 color: color.withValues(alpha: 0.17),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(
-                iconForCodePoint(item.iconCodePoint),
-                color: color,
-              ),
+              child: Icon(iconForCodePoint(item.iconCodePoint), color: color),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1226,8 +1233,9 @@ class DeadlineCard extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                       fontSize: 16,
                       color: kText,
-                      decoration:
-                          item.completed ? TextDecoration.lineThrough : null,
+                      decoration: item.completed
+                          ? TextDecoration.lineThrough
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -1236,8 +1244,8 @@ class DeadlineCard extends StatelessWidget {
                   Text(
                     formatDeadline(item.due),
                     style: TextStyle(
-                      color: item.due.isBefore(DateTime.now()) &&
-                              !item.completed
+                      color:
+                          item.due.isBefore(DateTime.now()) && !item.completed
                           ? const Color(0xFFD65050)
                           : kBlue,
                       fontWeight: FontWeight.w700,
@@ -1264,11 +1272,7 @@ class DeadlineCard extends StatelessWidget {
 }
 
 class DeadlineEditor extends StatefulWidget {
-  const DeadlineEditor({
-    required this.lessons,
-    this.initialItem,
-    super.key,
-  });
+  const DeadlineEditor({required this.lessons, this.initialItem, super.key});
 
   final List<Lesson> lessons;
   final DeadlineItem? initialItem;
@@ -1325,9 +1329,9 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
 
   void _save() {
     if (_title.text.trim().isEmpty || _subject.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter title and subject')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter title and subject')));
       return;
     }
 
@@ -1351,16 +1355,19 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
     Navigator.pop(
       context,
       DeadlineItem(
-        id: widget.initialItem?.id ??
+        id:
+            widget.initialItem?.id ??
             DateTime.now().microsecondsSinceEpoch.toString(),
         title: _title.text.trim(),
         subject: subject,
         due: due,
         completed: widget.initialItem?.completed ?? false,
-        colorValue: matching?.colorValue ??
+        colorValue:
+            matching?.colorValue ??
             widget.initialItem?.colorValue ??
             kSubjectColors.first.toARGB32(),
-        iconCodePoint: matching?.iconCodePoint ??
+        iconCodePoint:
+            matching?.iconCodePoint ??
             widget.initialItem?.iconCodePoint ??
             Icons.flag_rounded.codePoint,
       ),
@@ -1369,11 +1376,8 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final List<String> subjects = widget.lessons
-        .map((Lesson e) => e.subject)
-        .toSet()
-        .toList()
-      ..sort();
+    final List<String> subjects =
+        widget.lessons.map((Lesson e) => e.subject).toSet().toList()..sort();
 
     final double keyboard = MediaQuery.viewInsetsOf(context).bottom;
 
@@ -1416,36 +1420,36 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
               optionsBuilder: (TextEditingValue value) {
                 if (value.text.isEmpty) return subjects;
                 return subjects.where(
-                  (String s) => s
-                      .toLowerCase()
-                      .contains(value.text.toLowerCase()),
+                  (String s) =>
+                      s.toLowerCase().contains(value.text.toLowerCase()),
                 );
               },
               onSelected: (String value) => _subject.text = value,
-              fieldViewBuilder: (
-                BuildContext context,
-                TextEditingController controller,
-                FocusNode focusNode,
-                VoidCallback onFieldSubmitted,
-              ) {
-                if (controller.text.isEmpty && _subject.text.isNotEmpty) {
-                  controller.text = _subject.text;
-                  controller.selection = TextSelection.collapsed(
-                    offset: controller.text.length,
-                  );
-                }
-                controller.addListener(() {
-                  _subject.text = controller.text;
-                });
-                return TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  decoration: const InputDecoration(
-                    labelText: 'Subject',
-                    border: OutlineInputBorder(),
-                  ),
-                );
-              },
+              fieldViewBuilder:
+                  (
+                    BuildContext context,
+                    TextEditingController controller,
+                    FocusNode focusNode,
+                    VoidCallback onFieldSubmitted,
+                  ) {
+                    if (controller.text.isEmpty && _subject.text.isNotEmpty) {
+                      controller.text = _subject.text;
+                      controller.selection = TextSelection.collapsed(
+                        offset: controller.text.length,
+                      );
+                    }
+                    controller.addListener(() {
+                      _subject.text = controller.text;
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: const InputDecoration(
+                        labelText: 'Subject',
+                        border: OutlineInputBorder(),
+                      ),
+                    );
+                  },
             ),
             const SizedBox(height: 14),
             Row(
@@ -1496,10 +1500,14 @@ class _DeadlineEditorState extends State<DeadlineEditor> {
 class TaskHubHeader extends StatelessWidget {
   const TaskHubHeader({
     required this.subtitle,
+    required this.notificationsEnabled,
+    required this.onToggleNotifications,
     super.key,
   });
 
   final String subtitle;
+  final bool notificationsEnabled;
+  final VoidCallback onToggleNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -1541,16 +1549,29 @@ class TaskHubHeader extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE7F0FF),
+          Material(
+            color: notificationsEnabled
+                ? const Color(0xFFE7F0FF)
+                : const Color(0xFFE8E8E8),
+            borderRadius: BorderRadius.circular(15),
+            child: InkWell(
+              onTap: onToggleNotifications,
               borderRadius: BorderRadius.circular(15),
-            ),
-            child: const Icon(
-              Icons.notifications_none_rounded,
-              color: kBlue,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Tooltip(
+                  message: notificationsEnabled
+                      ? 'Отключить уведомления'
+                      : 'Включить уведомления',
+                  child: Icon(
+                    notificationsEnabled
+                        ? Icons.notifications_active_outlined
+                        : Icons.notifications_off_outlined,
+                    color: notificationsEnabled ? kBlue : kMuted,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -1560,11 +1581,7 @@ class TaskHubHeader extends StatelessWidget {
 }
 
 class MetaText extends StatelessWidget {
-  const MetaText({
-    required this.icon,
-    required this.text,
-    super.key,
-  });
+  const MetaText({required this.icon, required this.text, super.key});
 
   final IconData icon;
   final String text;
@@ -1578,10 +1595,7 @@ class MetaText extends StatelessWidget {
         const SizedBox(width: 4),
         Text(
           text,
-          style: const TextStyle(
-            color: kMuted,
-            fontWeight: FontWeight.w600,
-          ),
+          style: const TextStyle(color: kMuted, fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -1610,15 +1624,15 @@ class Lesson {
   final int iconCodePoint;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'day': day,
-        'subject': subject,
-        'room': room,
-        'start': start,
-        'end': end,
-        'colorValue': colorValue,
-        'iconCodePoint': iconCodePoint,
-      };
+    'id': id,
+    'day': day,
+    'subject': subject,
+    'room': room,
+    'start': start,
+    'end': end,
+    'colorValue': colorValue,
+    'iconCodePoint': iconCodePoint,
+  };
 
   factory Lesson.fromJson(Map<String, dynamic> json) {
     return Lesson(
@@ -1653,9 +1667,7 @@ class DeadlineItem {
   final int colorValue;
   final int iconCodePoint;
 
-  DeadlineItem copyWith({
-    bool? completed,
-  }) {
+  DeadlineItem copyWith({bool? completed}) {
     return DeadlineItem(
       id: id,
       title: title,
@@ -1668,14 +1680,14 @@ class DeadlineItem {
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'title': title,
-        'subject': subject,
-        'due': due.toIso8601String(),
-        'completed': completed,
-        'colorValue': colorValue,
-        'iconCodePoint': iconCodePoint,
-      };
+    'id': id,
+    'title': title,
+    'subject': subject,
+    'due': due.toIso8601String(),
+    'completed': completed,
+    'colorValue': colorValue,
+    'iconCodePoint': iconCodePoint,
+  };
 
   factory DeadlineItem.fromJson(Map<String, dynamic> json) {
     return DeadlineItem(
@@ -1710,7 +1722,6 @@ String shortDay(String day) {
       return day;
   }
 }
-
 
 TimeOfDay parseTime(String value) {
   final List<String> parts = value.split(':');
