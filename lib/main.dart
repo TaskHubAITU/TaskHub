@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'map_page.dart';
+import 'university_map_data.dart';
 
 const Color kMilk = Color(0xFFF7F4ED);
 const Color kCard = Color(0xFFFFFDF8);
@@ -57,7 +58,9 @@ void main() {
 }
 
 class TaskHubApp extends StatefulWidget {
-  const TaskHubApp({super.key});
+  const TaskHubApp({super.key, this.mapCatalog});
+
+  final MapCatalog? mapCatalog;
 
   @override
   State<TaskHubApp> createState() => _TaskHubAppState();
@@ -65,6 +68,8 @@ class TaskHubApp extends StatefulWidget {
 
 class _TaskHubAppState extends State<TaskHubApp> {
   int _tab = 0;
+  int _mapRequestId = 0;
+  MapRoomRequest? _mapRequest;
   bool _loading = true;
   List<Lesson> _lessons = <Lesson>[];
   List<DeadlineItem> _deadlines = <DeadlineItem>[];
@@ -133,6 +138,13 @@ class _TaskHubAppState extends State<TaskHubApp> {
   Future<void> _clearSchedule() async {
     setState(() => _lessons = <Lesson>[]);
     await _saveLessons();
+  }
+
+  void _showRoomOnMap(String room) {
+    setState(() {
+      _mapRequest = MapRoomRequest(room, ++_mapRequestId);
+      _tab = 2;
+    });
   }
 
   Future<void> _addDeadline(DeadlineItem item) async {
@@ -210,6 +222,7 @@ class _TaskHubAppState extends State<TaskHubApp> {
                       onUpdateLesson: _updateLesson,
                       onDeleteLesson: _deleteLesson,
                       onClearSchedule: _clearSchedule,
+                      onShowRoomOnMap: _showRoomOnMap,
                     ),
                     DeadlinesPage(
                       deadlines: _deadlines,
@@ -219,7 +232,10 @@ class _TaskHubAppState extends State<TaskHubApp> {
                       onToggle: _toggleDeadline,
                       onDelete: _deleteDeadline,
                     ),
-                    const MapPage(),
+                    MapPage(
+                      catalog: widget.mapCatalog,
+                      roomRequest: _mapRequest,
+                    ),
                   ],
                 ),
               ),
@@ -261,6 +277,7 @@ class SchedulePage extends StatefulWidget {
     required this.onUpdateLesson,
     required this.onDeleteLesson,
     required this.onClearSchedule,
+    required this.onShowRoomOnMap,
     super.key,
   });
 
@@ -270,6 +287,7 @@ class SchedulePage extends StatefulWidget {
   final Future<void> Function(Lesson lesson) onUpdateLesson;
   final Future<void> Function(String id) onDeleteLesson;
   final Future<void> Function() onClearSchedule;
+  final ValueChanged<String> onShowRoomOnMap;
 
   @override
   State<SchedulePage> createState() => _SchedulePageState();
@@ -387,6 +405,8 @@ class _SchedulePageState extends State<SchedulePage> {
                           lesson: lesson,
                           onEdit: () => _openLessonEditor(lesson),
                           onDelete: () => widget.onDeleteLesson(lesson.id),
+                          onShowRoomOnMap: () =>
+                              widget.onShowRoomOnMap(lesson.room),
                         ),
                       ),
                     ),
@@ -588,12 +608,14 @@ class LessonCard extends StatelessWidget {
     required this.lesson,
     required this.onEdit,
     required this.onDelete,
+    required this.onShowRoomOnMap,
     super.key,
   });
 
   final Lesson lesson;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onShowRoomOnMap;
 
   @override
   Widget build(BuildContext context) {
@@ -628,23 +650,23 @@ class LessonCard extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 17, 8, 17),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Icon(icon, color: color),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
+                    Row(
+                      children: <Widget>[
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          child: Icon(icon, color: color),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
                             lesson.subject,
                             style: const TextStyle(
                               fontSize: 17,
@@ -652,35 +674,56 @@ class LessonCard extends StatelessWidget {
                               color: kText,
                             ),
                           ),
-                          const SizedBox(height: 5),
-                          Wrap(
-                            spacing: 14,
-                            runSpacing: 4,
-                            children: <Widget>[
-                              MetaText(
-                                icon: Icons.schedule_rounded,
-                                text: '${lesson.start} – ${lesson.end}',
-                              ),
-                              MetaText(
-                                icon: Icons.location_on_outlined,
-                                text: lesson.room.isEmpty
-                                    ? 'No room'
-                                    : lesson.room,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                        ),
+                        IconButton(
+                          tooltip: 'Edit',
+                          onPressed: onEdit,
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete',
+                          onPressed: onDelete,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      tooltip: 'Edit',
-                      onPressed: onEdit,
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
-                    IconButton(
-                      tooltip: 'Delete',
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.close_rounded),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 14,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        MetaText(
+                          icon: Icons.schedule_rounded,
+                          text: '${lesson.start} – ${lesson.end}',
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            MetaText(
+                              icon: Icons.location_on_outlined,
+                              text: lesson.room.isEmpty
+                                  ? 'No room'
+                                  : lesson.room,
+                            ),
+                            if (lesson.room.trim().isNotEmpty)
+                              SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: IconButton(
+                                  tooltip: 'Показать кабинет на карте',
+                                  onPressed: onShowRoomOnMap,
+                                  padding: EdgeInsets.zero,
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: const Color(0xFFE7F0FF),
+                                    foregroundColor: kBlue,
+                                  ),
+                                  icon: const Icon(Icons.map_outlined, size: 18),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   ],
                 ),

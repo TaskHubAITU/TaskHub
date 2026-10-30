@@ -13,10 +13,18 @@ const _blue = Color(0xFF3478F6);
 const _ink = Color(0xFF1F2430);
 const _muted = Color(0xFF7E8798);
 
+class MapRoomRequest {
+  const MapRoomRequest(this.room, this.id);
+
+  final String room;
+  final int id;
+}
+
 class MapPage extends StatefulWidget {
-  const MapPage({super.key, this.catalog});
+  const MapPage({super.key, this.catalog, this.roomRequest});
 
   final MapCatalog? catalog;
+  final MapRoomRequest? roomRequest;
 
   @override
   State<MapPage> createState() => _MapPageState();
@@ -37,6 +45,49 @@ class _MapPageState extends State<MapPage> {
   bool _showResults = false;
   Size _viewport = Size.zero;
   MapFloor? _plan;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.roomRequest != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openRoomRequest(widget.roomRequest!);
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant MapPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final request = widget.roomRequest;
+    if (request != null && request.id != oldWidget.roomRequest?.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openRoomRequest(request);
+      });
+    }
+  }
+
+  Future<void> _openRoomRequest(MapRoomRequest request) async {
+    MapCatalog catalog;
+    try {
+      catalog = await _catalog;
+    } catch (_) {
+      return;
+    }
+    if (!mounted || widget.roomRequest?.id != request.id) return;
+    final query = request.room.trim();
+    final exact = catalog.exact(query);
+    final matches = exact == null ? catalog.search(query) : <MapRoom>[exact];
+    if (matches.length == 1) {
+      _chooseRoom(matches.first);
+    } else {
+      _query.text = query;
+      setState(() {
+        _selected = null;
+        _showResults = true;
+      });
+    }
+  }
 
   @override
   void dispose() {
