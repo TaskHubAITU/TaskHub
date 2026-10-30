@@ -57,7 +57,11 @@ assets/map/                 Room data and floor maps
 
 ## Screenshots
 
-Screenshots of the current app interface will be added here.
+<p align="center">
+  <img src="docs/screenshots/schedule.png" alt="TaskHub weekly schedule" width="250" />
+  <img src="docs/screenshots/deadlines.png" alt="TaskHub assignment deadlines" width="250" />
+  <img src="docs/screenshots/map.png" alt="TaskHub campus map" width="250" />
+</p>
 
 ## Project Status
 
