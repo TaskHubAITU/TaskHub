@@ -89,4 +89,4 @@ See the [GitHub contributors and commit history](https://github.com/alikhansabar
 
 ---
 
-*Built for students at Astana IT University.*
+*Made by students for students at Astana IT University.*
